@@ -4,6 +4,9 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
 
+/**
+ * {@link AioClient}, {@link AioServer} 基类
+ */
 abstract class AioBase {
     protected final Map<String, Object> attrs;
     protected final ExecutorService     exec;

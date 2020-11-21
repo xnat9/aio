@@ -1,7 +1,16 @@
 # aio
 
 #### 介绍
-aio tcp
+tcp 数据接收发送工具
+
+* AioStream: Aio(socket)连接, 写数据，读数据
+* AioClient: 发送数据
+    
+    `
+        
+    `
+    
+* AioServer: 接收连接,包装成AioStream  
 
 #### 软件架构
 软件架构说明

@@ -74,36 +74,36 @@ public class AioClient extends AioBase {
         if (port == null) throw new IllegalArgumentException("port must not be null");
         if (msgBytes == null || msgBytes.length < 1) throw new IllegalArgumentException("msgBytes must not be null");
         String key = host + ":" + port;
-        final Supplier<AioStream> sessionSupplier = () -> {
+        final Supplier<AioStream> streamSupplier = () -> { // aioStream 获取函数
             try {
                 return getSession(host, port);
             } catch (Exception ex) { // 拿连接报错, 则回调失败函数
                 if (failFn != null) failFn.accept(ex);
-                else log.error("Send to " + key + " error. getSession", ex);
+                else log.error("Send to " + key + " error. getStream", ex);
             }
             return null;
         };
+        // 把发送在数据组装成 ByteBuffer
         ByteBuffer msgBuf = ByteBuffer.allocate(msgBytes.length + (delim == null ? 0 : delim.length));
         msgBuf.put(msgBytes); if (delim != null) msgBuf.put(delim);
-
-        final BiConsumer<Exception, AioStream> subFailFn = new BiConsumer<Exception, AioStream>() {
+        final BiConsumer<Exception, AioStream> subFailFn = new BiConsumer<Exception, AioStream>() { // AioStream 写入流错误的回调函数
             @Override
             public void accept(Exception ex, AioStream session) {
                 if (ex instanceof ClosedChannelException) { // 连接关闭时 重试
-                    AioStream se = sessionSupplier.get();
+                    AioStream se = streamSupplier.get();
                     if (se != null) {
                         se.write(msgBuf, this, (okFn == null ? null : () -> okFn.accept(se)));
                     }
                 } else {
                     try {
-                        log.error("Send to " + key + " error. " + session.channel.getLocalAddress() + " -> " + session.channel.getRemoteAddress(), ex);
+                        log.error("Write to " + key + " error. " + session.channel.getLocalAddress() + " -> " + session.channel.getRemoteAddress(), ex);
                     } catch (IOException e) {
                         log.error("", e);
                     }
                 }
             }
         };
-        AioStream se = sessionSupplier.get();
+        AioStream se = streamSupplier.get();
         if (se != null) {
             se.write(msgBuf, subFailFn, (okFn == null ? null : () -> okFn.accept(se)));
         }
@@ -111,9 +111,21 @@ public class AioClient extends AioBase {
     }
 
 
+    /**
+     * {@link #send(String, Integer, byte[], Consumer, Consumer)}
+     * @param host
+     * @param port
+     * @param msgBytes
+     * @return
+     */
     public AioClient send(String host, Integer port, byte[] msgBytes) { return send(host, port, msgBytes, null, null); }
 
 
+    /**
+     * 数据接收
+     * @param bs 接收的字节
+     * @param stream aio tcp 流
+     */
     protected void receive(byte[] bs, AioStream stream) {}
 
 
@@ -164,15 +176,15 @@ public class AioClient extends AioBase {
             channel.setOption(StandardSocketOptions.SO_RCVBUF, getInteger("so_rcvbuf", 1024 * 1024 * 2));
             channel.setOption(StandardSocketOptions.SO_SNDBUF, getInteger("so_sndbuf", 1024 * 1024 * 2));
             channel.connect(new InetSocketAddress(host, port)).get(getLong("aioConnectTimeout", 3000L), TimeUnit.MILLISECONDS);
-            log.info("New TCP(AIO) connection to " + key);
+            log.info("New TCP(AIO) connection to '" + key + "'");
         } catch(Exception ex) {
             try {channel.close();} catch(Exception exx) {}
             throw new RuntimeException("连接错误. $key", ex);
         }
         AioStream se = new AioStream(channel, this) {
             @Override
-            protected void doClose(AioStream session) {
-                sessionMap.get(key).remove(session);
+            protected void doClose(AioStream stream) {
+                sessionMap.get(key).remove(stream);
             }
 
             @Override
@@ -228,7 +240,7 @@ public class AioClient extends AioBase {
      * 安全列表
      * @param <E>
      */
-    public class SafeList<E> {
+    protected class SafeList<E> {
         protected final ArrayList<E>  data = new ArrayList<>();
         protected final ReadWriteLock lock = new ReentrantReadWriteLock();
 

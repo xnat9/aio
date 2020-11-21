@@ -19,18 +19,38 @@ import java.util.function.BiConsumer;
  */
 public class AioStream {
     protected static final Logger                       log         = LoggerFactory.getLogger(AioStream.class);
-    protected final    AsynchronousSocketChannel        channel;
-    protected final ReadHandler                         readHandler = new ReadHandler();
-    protected       AioBase                             aioBase;
-    protected final Queue<Runnable>                     queue       = new ConcurrentLinkedQueue<>();
-    // close 回调函数
-    protected       Runnable                            closeFn;
-    protected       Long                                lastUsed    = System.currentTimeMillis();
-    // 上次读写时间
-    protected final AtomicBoolean                       closed      = new AtomicBoolean(false);
-    protected final        AtomicBoolean                running     = new AtomicBoolean(false);
-    // 每次接收消息的内存空间
-    protected final    ByteBuffer                       buf;
+    /**
+     * Aio 监听渠道
+     */
+    protected final AsynchronousSocketChannel           channel;
+    /**
+     * Aio tcp socket 流 读取器
+     */
+    protected final ReadHandler     readHandler = new ReadHandler();
+    /**
+     * {@link AioClient} {@link AioServer}
+     */
+    protected final AioBase         aioBase;
+    /**
+     * Write 任务对列
+     */
+    protected final Queue<Runnable> queue       = new ConcurrentLinkedQueue<>();
+    /**
+     * 上次读写时间
+     */
+    protected       Long            lastUsed    = System.currentTimeMillis();
+    /**
+     * 是否已关闭
+     */
+    protected final AtomicBoolean   closed      = new AtomicBoolean(false);
+    /**
+     * 是否正在写入
+     */
+    protected final AtomicBoolean   writing     = new AtomicBoolean(false);
+    /**
+     * 每次接收消息的内存空间
+     */
+    protected final ByteBuffer      buf;
 
 
     /**
@@ -44,11 +64,6 @@ public class AioStream {
         this.channel = channel;
         this.aioBase = aioBase;
         this.buf = ByteBuffer.allocate(aioBase.getInteger("maxMsgSize", 1024 * 1024));
-    }
-
-
-    protected void doRead(ByteBuffer bb) {
-
     }
 
 
@@ -67,21 +82,14 @@ public class AioStream {
             try { channel.shutdownInput(); } catch(Exception ex) {}
             try { channel.close(); } catch(Exception ex) {}
             doClose(this);
-            if (closeFn != null) closeFn.run();
         }
     }
 
 
-    protected void doClose(AioStream session) {
-        // TODO
-    }
+    protected void doClose(AioStream stream) {}
 
 
-    /**
-     * 当前会话渠道是否忙
-     * @return
-     */
-    public boolean busy() { return queue.size() > 1; }
+    protected void doRead(ByteBuffer bb) {}
 
 
     /**
@@ -91,11 +99,13 @@ public class AioStream {
      * @param okFn 成功回调
      */
     public void write(ByteBuffer bb, BiConsumer<Exception, AioStream> failFn, Runnable okFn) {
-        if (closed.get() || bb == null) return;
+        if (closed.get()) throw new RuntimeException("Already closed");
+        if (bb == null) throw new IllegalArgumentException("Write data us empty");
         lastUsed = System.currentTimeMillis();
         queue.offer(() -> { // 排对发送消息. 避免 WritePendingException
             try {
-                channel.write(bb).get(1000L, TimeUnit.MILLISECONDS);
+                bb.flip();
+                channel.write(bb).get(aioBase.getInteger("writeTimeout", 10), TimeUnit.SECONDS);
                 if (okFn != null) okFn.run();
             } catch (Exception ex) {
                 close();
@@ -129,14 +139,14 @@ public class AioStream {
      */
     protected void trigger() { // 触发发送
         if (queue.isEmpty()) return;
-        if (!running.compareAndSet(false, true)) return;
+        if (!writing.compareAndSet(false, true)) return;
         aioBase.exec(() -> {
             Runnable task;
             try {
                 task = queue.poll();
                 if (task != null) task.run();
             } finally {
-                running.set(false);
+                writing.set(false);
                 if (!queue.isEmpty()) trigger(); // 持续不断执行对列中的任务
             }
         });
@@ -159,21 +169,33 @@ public class AioStream {
 
 
     /**
+     * 当前会话渠道是否忙
+     * @return
+     */
+    public boolean busy() { return queue.size() > 1; }
+
+
+    /**
      * socket 数据读取处理器
      */
     protected class ReadHandler implements CompletionHandler<Integer, ByteBuffer> {
 
         @Override
         public void completed(Integer count, ByteBuffer buf) {
+            lastUsed = System.currentTimeMillis();
             if (count > 0) {
-                lastUsed = System.currentTimeMillis();
                 buf.flip();
                 doRead(buf);
-                // 同一时间只有一个 read, 避免 ReadPendingException
-                read();
             } else {
-                // log.warn("接收字节为空. 关闭 " + channel.toString());
+                // 接收字节为空
                 if (!channel.isOpen()) close();
+            }
+            // 同一时间只有一个 read, 避免 ReadPendingException
+            try {
+                read();
+            } catch (Exception ex) {
+                log.error(aioBase.getClass().getSimpleName(), ex);
+                close();
             }
         }
 

@@ -6,10 +6,8 @@ import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.net.*;
-import java.nio.channels.AsynchronousChannelGroup;
-import java.nio.channels.AsynchronousServerSocketChannel;
-import java.nio.channels.AsynchronousSocketChannel;
-import java.nio.channels.CompletionHandler;
+import java.nio.ByteBuffer;
+import java.nio.channels.*;
 import java.text.SimpleDateFormat;
 import java.time.Duration;
 import java.util.*;
@@ -17,15 +15,14 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.atomic.LongAdder;
-import java.util.function.BiConsumer;
 import java.util.function.Supplier;
 
+
+/**
+ * TCP(AIO) 服务
+ */
 public class AioServer extends AioBase {
     protected static final Logger                                                  log         = LoggerFactory.getLogger(AioServer.class);
-    /**
-     * 接收TCP消息的处理函数集
-     */
-    protected final        List<BiConsumer<String, AioStream>>                     msgFns      = new LinkedList<>();
     /**
      * 新TCP连接 接受处理
      */
@@ -40,12 +37,19 @@ public class AioServer extends AioBase {
     // 当前连会话
     protected  final       Queue<AioStream>                                        connections = new ConcurrentLinkedQueue<>();
     protected final  Counter                                                       counter     = new Counter();
+    /**
+     * 数据分割符(半包和粘包)
+     */
+    protected final byte[]                              delim;
 
 
     public AioServer(Map<String, Object> attrs, ExecutorService exec) {
         super(attrs, exec);
         hpCfg = getStr("hp", ":7001");
         try {
+            String delimiter = getStr("delimiter", null);
+            if (delimiter != null && !delimiter.isEmpty()) delim = delimiter.getBytes("utf-8");
+            else delim = null;
             port = Integer.valueOf(hpCfg.split(":")[1]);
         } catch (Exception ex) {
             throw new IllegalArgumentException("AioServer hp 格式错误. " + hpCfg, ex);
@@ -66,12 +70,12 @@ public class AioServer extends AioBase {
             ssc.setOption(StandardSocketOptions.SO_RCVBUF, getInteger("so_revbuf", 1024 * 1024));
 
             String host = hpCfg.split(":")[0];
-            InetSocketAddress addr = new InetSocketAddress(port);
+            InetSocketAddress addr;
             if (host != null && !host.isEmpty()) {addr = new InetSocketAddress(host, port);}
+            else addr = new InetSocketAddress(port);
 
             ssc.bind(addr, getInteger("backlog", 128));
             log.info("Start listen TCP(AIO) {}", port);
-            msgFns.add((msg, se) -> receive(msg, se));
             accept();
         } catch (IOException ex) {
             throw new RuntimeException("Start error", ex);
@@ -93,27 +97,13 @@ public class AioServer extends AioBase {
         }
     }
 
-    /**
-     * 添加消息处理函数
-     * @param msgFn 入参1: 是消息字符串, 入参2: 回响函数
-     * @return
-     */
-    public AioServer msgFn(BiConsumer<String, AioStream> msgFn) {if (msgFn != null) this.msgFns.add(msgFn); return this; }
-
 
     /**
-     * 消息接受处理
-     * @param msg 消息内容
-     * @param stream AioSession
+     * tcp byte 字节流接收处理
+     * @param bs 接收到的字节
+     * @param stream aio 流
      */
-    protected void receive(String msg, AioStream stream) {
-        try {
-            log.trace("Receive client '{}' data: {}", stream.channel.getRemoteAddress(), msg);
-        } catch (IOException e) {
-            log.error("", e);
-        }
-        counter.increment(); // 统计
-    }
+    protected void receive(byte[] bs, AioStream stream) {}
 
 
     /**
@@ -191,6 +181,98 @@ public class AioServer extends AioBase {
             } else if (System.currentTimeMillis() - se.lastUsed > expire) {
                 limit--; itt.remove(); se.close();
                 log.info("Closed expired AioSession: " + se + ", connected: " + connections.size());
+            }
+        }
+    }
+
+
+    /**
+     * 连接处理器
+     */
+    protected class AcceptHandler implements CompletionHandler<AsynchronousSocketChannel, AioServer> {
+
+        @Override
+        public void completed(final AsynchronousSocketChannel channel, final AioServer srv) {
+            exec(() -> {
+                AioStream se = null;
+                try {
+                    channel.setOption(StandardSocketOptions.SO_REUSEADDR, true);
+                    channel.setOption(StandardSocketOptions.SO_RCVBUF, getInteger("so_rcvbuf", 1024 * 1024 * 2));
+                    channel.setOption(StandardSocketOptions.SO_SNDBUF, getInteger("so_sndbuf", 1024 * 1024 * 2));
+                    channel.setOption(StandardSocketOptions.SO_KEEPALIVE, true);
+                    channel.setOption(StandardSocketOptions.TCP_NODELAY, true);
+
+                    se = new AioStream(channel, srv) { //创建AioStream
+                        @Override
+                        protected void doClose(AioStream stream) {
+                            connections.remove(stream);
+                        }
+
+                        @Override
+                        protected void doRead(ByteBuffer bb) {
+                            counter.increment(); // 统计
+                            if (delim == null) { // 没有分割符的时候
+                                byte[] bs = new byte[buf.limit()];
+                                buf.get(bs);
+                                receive(bs, this);
+                            } else { // 分割 半包和粘包
+                                do {
+                                    int delimIndex = indexOf(buf);
+                                    if (delimIndex < 0) break;
+                                    int readableLength = delimIndex - buf.position();
+                                    byte[] bs = new byte[readableLength];
+                                    buf.get(bs);
+                                    receive(bs, this);
+
+                                    // 跳过 分割符的长度
+                                    for (int i = 0; i < delim.length; i++) {buf.get();}
+                                } while (true);
+                                buf.compact();
+                            }
+                        }
+                    };
+                    connections.offer(se);
+                    InetSocketAddress rAddr = ((InetSocketAddress) channel.getRemoteAddress());
+                    srv.log.info("New TCP(AIO) Connection from: " + rAddr.getHostString() + ":" + rAddr.getPort() + ", connected: " + connections.size());
+                    se.start();
+                    if (connections.size() > 10) clean();
+                } catch (IOException e) {
+                    if (se != null) se.close();
+                    else {
+                        try { channel.close(); } catch (IOException ex) {}
+                    }
+                    log.error("Create AioStream error", e);
+                }
+            });
+            // 继续接入新连接
+            srv.accept();
+        }
+
+        /**
+         * 查找分割符所匹配下标
+         * @param buf
+         * @return
+         */
+        protected int indexOf(ByteBuffer buf) {
+            byte[] hb = buf.array();
+            int delimIndex = -1; // 分割符所在的下标
+            for (int i = buf.position(), size = buf.limit(); i < size; i++) {
+                boolean match = true; // 是否找到和 delim 相同的字节串
+                for (int j = 0; j < delim.length; j++) {
+                    match = match && (i + j < size) && delim[j] == hb[i + j];
+                }
+                if (match) {
+                    delimIndex = i;
+                    break;
+                }
+            }
+            return delimIndex;
+        }
+
+        @Override
+        public void failed(Throwable ex, AioServer srv) {
+            if (!(ex instanceof ClosedChannelException)) {
+                srv.log.error(ex.getMessage() == null ? ex.getClass().getSimpleName() : ex.getMessage(), ex);
             }
         }
     }
