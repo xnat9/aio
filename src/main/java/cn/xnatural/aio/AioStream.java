@@ -30,7 +30,7 @@ public class AioStream {
     /**
      * {@link AioClient} {@link AioServer}
      */
-    protected final AioBase         aioBase;
+    protected final AioBase delegate;
     /**
      * Write 任务对列
      */
@@ -51,19 +51,24 @@ public class AioStream {
      * 每次接收消息的内存空间
      */
     protected final ByteBuffer      buf;
+    /**
+     * 数据分割符(半包和粘包)
+     */
+    protected final byte[]                              delim;
 
 
     /**
      * 创建 AioSession
      * @param channel {@link AsynchronousSocketChannel}
-     * @param aioBase
+     * @param delegate
      */
-    public AioStream(AsynchronousSocketChannel channel, AioBase aioBase) {
-        if (channel == null) throw new IllegalArgumentException("channel must not be null");
-        if (aioBase == null) throw new IllegalArgumentException("exec must not be null");
+    public AioStream(AsynchronousSocketChannel channel, AioBase delegate) {
+        if (channel == null) throw new NullPointerException("channel must not be null");
+        if (delegate == null) throw new NullPointerException("exec must not be null");
         this.channel = channel;
-        this.aioBase = aioBase;
-        this.buf = ByteBuffer.allocate(aioBase.getInteger("maxMsgSize", 1024 * 1024));
+        this.delegate = delegate;
+        this.buf = ByteBuffer.allocate(delegate.getInteger("maxMsgSize", 1024 * 1024));
+        this.delim = (byte[]) delegate.getAttr("delim");
     }
 
 
@@ -89,27 +94,27 @@ public class AioStream {
     protected void doClose(AioStream stream) {}
 
 
-    protected void doRead(ByteBuffer bb) {}
+    protected void doRead(ByteBuffer buf) {}
 
 
     /**
-     * 发送消息到客户端
-     * @param bb
-     * @param failFn 失败回调
-     * @param okFn 成功回调
+     * 写入消息到流
+     * @param data 要写入的数据
+     * @param failFn 失败回调函数
+     * @param okFn 成功回调函数
      */
-    public void write(ByteBuffer bb, BiConsumer<Exception, AioStream> failFn, Runnable okFn) {
+    protected void write(ByteBuffer data, BiConsumer<Exception, AioStream> failFn, Runnable okFn) {
         if (closed.get()) throw new RuntimeException("Already closed");
-        if (bb == null) throw new IllegalArgumentException("Write data us empty");
+        if (data == null) throw new IllegalArgumentException("Write data us empty");
         lastUsed = System.currentTimeMillis();
         queue.offer(() -> { // 排对发送消息. 避免 WritePendingException
             try {
-                bb.flip();
-                channel.write(bb).get(aioBase.getInteger("writeTimeout", 10), TimeUnit.SECONDS);
-                if (okFn != null) okFn.run();
+                data.flip();
+                channel.write(data).get(delegate.getInteger("writeTimeout", 10000), TimeUnit.MILLISECONDS);
+                if (okFn != null) delegate.exec(okFn);
             } catch (Exception ex) {
                 close();
-                if (failFn != null) failFn.accept(ex, this);
+                if (failFn != null) delegate.exec(() -> failFn.accept(ex, this));
                 else {
                     if (!(ex instanceof ClosedChannelException)) {
                         try {
@@ -126,12 +131,36 @@ public class AioStream {
 
 
     /**
-     * {@link #write(ByteBuffer, BiConsumer, Runnable)}
-     * @param bb
+     * 回应消息
+     * @param bs 消息字节数组
+     * @param failFn 回应失败回调函数
+     * @param okFn 回应成功回调函数
      */
-    public void write(ByteBuffer bb) {
-        write(bb, null, null);
+    public void reply(byte[] bs, BiConsumer<Exception, AioStream> failFn, Runnable okFn) {
+        if (delim == null) {
+            write(ByteBuffer.wrap(bs), failFn, okFn);
+        } else {
+            ByteBuffer msgBuf = ByteBuffer.allocate(bs.length + delim.length);
+            msgBuf.put(bs); msgBuf.put(delim);
+            write(msgBuf, failFn, okFn);
+        }
     }
+
+
+    /**
+     * {@link #reply(byte[], BiConsumer, Runnable)}
+     * @param bs 消息字节数组
+     */
+    public void reply(byte[] bs) {
+        if (delim == null) {
+            write(ByteBuffer.wrap(bs), null, null);
+        } else {
+            ByteBuffer msgBuf = ByteBuffer.allocate(bs.length + delim.length);
+            msgBuf.put(bs); msgBuf.put(delim);
+            write(msgBuf, null, null);
+        }
+    }
+
 
 
     /**
@@ -140,10 +169,9 @@ public class AioStream {
     protected void trigger() { // 触发发送
         if (queue.isEmpty()) return;
         if (!writing.compareAndSet(false, true)) return;
-        aioBase.exec(() -> {
-            Runnable task;
+        delegate.exec(() -> {
             try {
-                task = queue.poll();
+                Runnable task = queue.poll();
                 if (task != null) task.run();
             } finally {
                 writing.set(false);
@@ -163,16 +191,8 @@ public class AioStream {
 
 
     @Override
-    public String toString() {
-        return super.toString() + "[" + channel.toString() + "]";
-    }
+    public String toString() { return super.toString() + "[" + channel.toString() + "]"; }
 
-
-    /**
-     * 当前会话渠道是否忙
-     * @return
-     */
-    public boolean busy() { return queue.size() > 1; }
 
 
     /**
@@ -194,7 +214,7 @@ public class AioStream {
             try {
                 read();
             } catch (Exception ex) {
-                log.error(aioBase.getClass().getSimpleName(), ex);
+                log.error(delegate instanceof AioClient ? "AioClient" : "AioServer", ex);
                 close();
             }
         }

@@ -32,17 +32,36 @@ public class AioServer extends AioBase {
      * 绑定配置 hp -> host:port
      */
     protected
+    /**
+     * 监听的端口
+     */
     final                  Integer                                                 port;
+    /**
+     * [host]:port
+     */
     protected final String                                                         hpCfg;
     // 当前连会话
-    protected  final       Queue<AioStream>                                        connections = new ConcurrentLinkedQueue<>();
-    protected final  Counter                                                       counter     = new Counter();
+    protected final Queue<AioStream>                                               connections = new ConcurrentLinkedQueue<>();
+    /**
+     * 统计器
+     */
+    protected final Counter                                                        counter     = new Counter();
     /**
      * 数据分割符(半包和粘包)
      */
     protected final byte[]                              delim;
 
 
+    /**
+     * 创建 {@link AioServer}
+     * @param attrs 属性集
+     *              delimiter: 分隔符
+     *              maxMsgSize: socket 每次取数据的最大
+     *              writeTimeout: 数据写入超时时间. 单位:毫秒
+     *              backlog: 排队连接
+     *              aioSession.maxIdle: 连接最大存活时间
+     * @param exec
+     */
     public AioServer(Map<String, Object> attrs, ExecutorService exec) {
         super(attrs, exec);
         hpCfg = getStr("hp", ":7001");
@@ -101,7 +120,7 @@ public class AioServer extends AioBase {
     /**
      * tcp byte 字节流接收处理
      * @param bs 接收到的字节
-     * @param stream aio 流
+     * @param stream {@link AioStream}
      */
     protected void receive(byte[] bs, AioStream stream) {}
 
@@ -109,9 +128,7 @@ public class AioServer extends AioBase {
     /**
      * 接收新连接
      */
-    protected void accept() {
-        ssc.accept(this, acceptor);
-    }
+    protected void accept() { ssc.accept(this, acceptor); }
 
 
     @EL(name = {"aio.hp", "tcp.hp"}, async = false)
@@ -153,8 +170,8 @@ public class AioServer extends AioBase {
      */
     @EL(name = "sys.heartbeat", async = true)
     protected void clean() {
-        if (connections.isEmpty()) return;
         int size = connections.size();
+        if (size < 1) return;
         long expire = Duration.ofSeconds(getInteger("aioSession.maxIdle",
                 ((Supplier<Integer>) () -> {
                     if (size > 80) return 60;
@@ -196,6 +213,7 @@ public class AioServer extends AioBase {
             exec(() -> {
                 AioStream se = null;
                 try {
+                    // 初始化连接
                     channel.setOption(StandardSocketOptions.SO_REUSEADDR, true);
                     channel.setOption(StandardSocketOptions.SO_RCVBUF, getInteger("so_rcvbuf", 1024 * 1024 * 2));
                     channel.setOption(StandardSocketOptions.SO_SNDBUF, getInteger("so_sndbuf", 1024 * 1024 * 2));
@@ -204,20 +222,18 @@ public class AioServer extends AioBase {
 
                     se = new AioStream(channel, srv) { //创建AioStream
                         @Override
-                        protected void doClose(AioStream stream) {
-                            connections.remove(stream);
-                        }
+                        protected void doClose(AioStream stream) { connections.remove(stream); }
 
                         @Override
-                        protected void doRead(ByteBuffer bb) {
+                        protected void doRead(ByteBuffer buf) {
                             counter.increment(); // 统计
                             if (delim == null) { // 没有分割符的时候
                                 byte[] bs = new byte[buf.limit()];
-                                buf.get(bs);
+                                buf.get(bs); buf.clear();
                                 receive(bs, this);
                             } else { // 分割 半包和粘包
                                 do {
-                                    int delimIndex = indexOf(buf);
+                                    int delimIndex = indexOf(buf, delim);
                                     if (delimIndex < 0) break;
                                     int readableLength = delimIndex - buf.position();
                                     byte[] bs = new byte[readableLength];
@@ -232,9 +248,9 @@ public class AioServer extends AioBase {
                         }
                     };
                     connections.offer(se);
+                    se.start();
                     InetSocketAddress rAddr = ((InetSocketAddress) channel.getRemoteAddress());
                     srv.log.info("New TCP(AIO) Connection from: " + rAddr.getHostString() + ":" + rAddr.getPort() + ", connected: " + connections.size());
-                    se.start();
                     if (connections.size() > 10) clean();
                 } catch (IOException e) {
                     if (se != null) se.close();
@@ -248,26 +264,6 @@ public class AioServer extends AioBase {
             srv.accept();
         }
 
-        /**
-         * 查找分割符所匹配下标
-         * @param buf
-         * @return
-         */
-        protected int indexOf(ByteBuffer buf) {
-            byte[] hb = buf.array();
-            int delimIndex = -1; // 分割符所在的下标
-            for (int i = buf.position(), size = buf.limit(); i < size; i++) {
-                boolean match = true; // 是否找到和 delim 相同的字节串
-                for (int j = 0; j < delim.length; j++) {
-                    match = match && (i + j < size) && delim[j] == hb[i + j];
-                }
-                if (match) {
-                    delimIndex = i;
-                    break;
-                }
-            }
-            return delimIndex;
-        }
 
         @Override
         public void failed(Throwable ex, AioServer srv) {
@@ -305,7 +301,7 @@ public class AioServer extends AioBase {
                 cal.add(Calendar.HOUR_OF_DAY, -1);
                 String lastHour = sdf.format(cal.getTime());
                 LongAdder c = hourCount.remove(lastHour);
-                if (c != null) log.info("{} 时共处理 TCP(AIO) 数据包: {} 个", lastHour, c);
+                if (c != null) log.info("{} total receive TCP(AIO) data packet: {}", lastHour, c);
             }
         }
     }

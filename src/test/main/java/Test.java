@@ -2,7 +2,8 @@ import cn.xnatural.aio.AioClient;
 import cn.xnatural.aio.AioServer;
 import cn.xnatural.aio.AioStream;
 
-import java.nio.ByteBuffer;
+import java.text.SimpleDateFormat;
+import java.util.Date;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
@@ -17,17 +18,19 @@ public class Test {
         AioServer server = new AioServer(attrs, exec) {
             @Override
             protected void receive(byte[] bs, AioStream stream) {
-                log.info("服务端 -> 接收数据: " + new String(bs));
+                log.info("服务端 -> 接收数据: " + new String(bs) + ", length: " + bs.length);
                 try {
                     Thread.sleep(1000 * 4);
                 } catch (InterruptedException e) {
                     e.printStackTrace();
                 }
-                stream.write(ByteBuffer.wrap("回消息: xxxxxxxxxxxxxx\n".getBytes()), (e, stream1) -> {
-                    log.info("回消息 失败", e);
-                }, () -> {
-                    log.info("回消息 成功");
-                });
+                stream.reply(
+                        ("服务端 回消息: " + new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date())).getBytes(),
+                        (ex, me) -> { //失败回调函数
+                            log.error("服务端 -> 回消息 失败", ex);
+                        }, () -> { //成功回调函数
+                            log.info("服务端 -> 回消息 成功");
+                        });
             }
         };
         server.start();
@@ -35,16 +38,19 @@ public class Test {
         AioClient client = new AioClient(attrs, exec) {
             @Override
             protected void receive(byte[] bs, AioStream stream) {
-                log.info("客户端 -> 接收数据: " + new String(bs));
+                log.info("客户端 -> 接收数据: " + new String(bs) + ", length: " + bs.length);
                 try {
                     Thread.sleep(1000 * 2);
                 } catch (InterruptedException e) {
                     e.printStackTrace();
                 }
-                stream.write(ByteBuffer.wrap("回消息: xxxxxxxxxxxxxx\n".getBytes()));
+                stream.reply(
+                        ("客户端 -> 回消息: " + new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date())).getBytes()
+                );
             }
         };
-        client.send("localhost", 7001, "Hello\n".getBytes());
+        client.send("localhost", 7001, "Hello1".getBytes());
+        // client.send("localhost", 7001, "Hello2".getBytes());
 
         Thread.sleep(1000 * 60 * 1);
         server.stop();

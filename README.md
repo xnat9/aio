@@ -1,46 +1,69 @@
-# aio
-
 #### 介绍
-tcp 数据接收发送工具
+轻量级 tcp 数据接收发送工具. 基于 jdk aio AsynchronousSocketChannel
 
-* AioStream: Aio(socket)连接, 写数据，读数据
-* AioClient: 发送数据
-    
-    `
-        
-    `
-    
-* AioServer: 接收连接,包装成AioStream  
-
-#### 软件架构
-软件架构说明
+适用协议: gt06, jt808, rpc 等
 
 
 #### 安装教程
+```
+<dependency>
+    <groupId>cn.xnatural.aio</groupId>
+    <artifactId>aio</artifactId>
+    <version>1.0.0</version>
+</dependency>
+```
 
-1.  xxxx
-2.  xxxx
-3.  xxxx
+#### 组件介绍
+* AioClient: 客户端. 发送数据,接收回应
+    
+```
+AioClient client = new AioClient(attrs, exec) { // 创建客户端
+    @Override
+    protected void receive(byte[] bs, AioStream stream) {
+        log.info("客户端 -> 接收数据: " + new String(bs) + ", length: " + bs.length);
+        stream.reply(("客户端 -> 回消息: xx").getBytes());
+    }
+};
+// 向本机 7001 发送 Hello 消息
+client.send("localhost", 7001, "Hello".getBytes("utf-8"))
+```
 
-#### 使用说明
+* AioServer: 服务端. 接收连接,包装成AioStream, 处理stream中过来的消息
+```
+ExecutorService exec = Executors.newFixedThreadPool(2);
+Map<String, Object> attrs = new HashMap<>(); // 属性集
+attrs.put("delimiter", "\n"); //分隔符 用于tcp拆粘包
+attrs.put("hp", ":7001"); //hp -> [ip]:端口. 监听7001端口
 
-1.  xxxx
-2.  xxxx
-3.  xxxx
+AioServer server = new AioServer(attrs, exec) { // 创建服务端
+    @Override
+    protected void receive(byte[] bs, AioStream stream) {
+        log.info("服务端 -> 接收数据: " + new String(bs) + ", length: " + bs.length);
+        stream.reply(
+                ("服务端 回消息: oo").getBytes(), //消息体字节
+                (ex, me) -> { //失败回调函数
+                    log.error("服务端 -> 回消息 失败", ex);
+                }, () -> { //成功回调函数
+                    log.info("服务端 -> 回消息 成功");
+                });
+    }
+};
+server.start(); //开始监听
+```
+
+* AioStream: Aio(AsynchronousSocketChannel)连接封装, 写数据, 读数据
+```
+/**
+ * 回应消息
+ * @param bs 消息字节数组
+ * @param failFn 回应失败回调函数
+ * @param okFn 回应成功回调函数
+ */
+reply(byte[] bs, BiConsumer<Exception, AioStream> failFn, Runnable okFn)
+```
+
+
 
 #### 参与贡献
 
-1.  Fork 本仓库
-2.  新建 Feat_xxx 分支
-3.  提交代码
-4.  新建 Pull Request
-
-
-#### 特技
-
-1.  使用 Readme\_XXX.md 来支持不同的语言，例如 Readme\_en.md, Readme\_zh.md
-2.  Gitee 官方博客 [blog.gitee.com](https://blog.gitee.com)
-3.  你可以 [https://gitee.com/explore](https://gitee.com/explore) 这个地址来了解 Gitee 上的优秀开源项目
-4.  [GVP](https://gitee.com/gvp) 全称是 Gitee 最有价值开源项目，是综合评定出的优秀开源项目
-5.  Gitee 官方提供的使用手册 [https://gitee.com/help](https://gitee.com/help)
-6.  Gitee 封面人物是一档用来展示 Gitee 会员风采的栏目 [https://gitee.com/gitee-stars/](https://gitee.com/gitee-stars/)
+xnatural@msn.cn

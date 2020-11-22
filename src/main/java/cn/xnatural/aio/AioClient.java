@@ -27,7 +27,10 @@ import java.util.function.*;
  */
 public class AioClient extends AioBase {
     protected static final Logger                              log        = LoggerFactory.getLogger(AioClient.class);
-    protected final        Map<String, SafeList<AioStream>>    sessionMap = new ConcurrentHashMap<>();
+    /**
+     * host:port -> List<AioStream>
+     */
+    protected final        Map<String, SafeList<AioStream>> streamMap = new ConcurrentHashMap<>();
     protected final        AsynchronousChannelGroup            group;
     /**
      * 数据分割符(半包和粘包)
@@ -35,12 +38,22 @@ public class AioClient extends AioBase {
     protected final byte[]                              delim;
 
 
+    /**
+     * 创建 {@link AioClient}
+     * @param attrs 属性集
+     *              delimiter: 分隔符
+     *              maxMsgSize: socket 每次取数据的最大
+     *              writeTimeout: 数据写入超时时间. 单位:毫秒
+     *              connectTimeout: 连接超时时间. 单位:毫秒
+     * @param exec 线程池
+     */
     public AioClient(Map<String, Object> attrs, ExecutorService exec) {
         super(attrs, exec);
         try {
             String delimiter = getStr("delimiter", null);
             if (delimiter != null && !delimiter.isEmpty()) delim = delimiter.getBytes("utf-8");
             else delim = null;
+            attrs.put("delim", delim);
             this.group = AsynchronousChannelGroup.withThreadPool(exec);
         } catch (IOException e) {
             throw new RuntimeException(e);
@@ -51,7 +64,7 @@ public class AioClient extends AioBase {
 
     @EL(name = "sys.stopping", async = true)
     public void stop() {
-        sessionMap.forEach((hp, ls) -> {
+        streamMap.forEach((hp, ls) -> {
             for (Iterator<AioStream> itt = ls.iterator(); itt.hasNext(); ) {
                 AioStream se = itt.next();
                 itt.remove();
@@ -137,24 +150,24 @@ public class AioClient extends AioBase {
      */
     protected AioStream getSession(String host, Integer port) {
         String key = host + ":" + port;
-        AioStream session = null;
-        SafeList<AioStream> ls = sessionMap.get(key);
+        AioStream stream = null;
+        SafeList<AioStream> ls = streamMap.get(key);
         if (ls == null) {
-            synchronized (sessionMap) {
-                ls = sessionMap.get(key);
+            synchronized (streamMap) {
+                ls = streamMap.get(key);
                 if (ls == null) {
-                    ls = new SafeList<>(); sessionMap.put(key, ls);
-                    session = create(host, port); ls.add(session);
+                    ls = new SafeList<>(); streamMap.put(key, ls);
+                    stream = create(host, port); ls.add(stream);
                 }
             }
         }
 
-        session = ls.findAny(se -> !se.busy());
-        if (session == null) {
-            session = create(host, port); ls.add(session);
+        stream = ls.findAny(se -> se.queue.size() < getInteger("maxWaitPerStream", 2));
+        if (stream == null) {
+            stream = create(host, port); ls.add(stream);
         }
 
-        return session;
+        return stream;
     }
 
 
@@ -175,7 +188,7 @@ public class AioClient extends AioBase {
             channel.setOption(StandardSocketOptions.SO_KEEPALIVE, true);
             channel.setOption(StandardSocketOptions.SO_RCVBUF, getInteger("so_rcvbuf", 1024 * 1024 * 2));
             channel.setOption(StandardSocketOptions.SO_SNDBUF, getInteger("so_sndbuf", 1024 * 1024 * 2));
-            channel.connect(new InetSocketAddress(host, port)).get(getLong("aioConnectTimeout", 3000L), TimeUnit.MILLISECONDS);
+            channel.connect(new InetSocketAddress(host, port)).get(getLong("connectTimeout", 3000L), TimeUnit.MILLISECONDS);
             log.info("New TCP(AIO) connection to '" + key + "'");
         } catch(Exception ex) {
             try {channel.close();} catch(Exception exx) {}
@@ -183,19 +196,17 @@ public class AioClient extends AioBase {
         }
         AioStream se = new AioStream(channel, this) {
             @Override
-            protected void doClose(AioStream stream) {
-                sessionMap.get(key).remove(stream);
-            }
+            protected void doClose(AioStream stream) { streamMap.get(key).remove(stream); }
 
             @Override
-            protected void doRead(ByteBuffer bb) {
+            protected void doRead(ByteBuffer buf) {
                 if (delim == null) { // 没有分割符的时候
                     byte[] bs = new byte[buf.limit()];
-                    buf.get(bs);
+                    buf.get(bs); buf.clear();
                     receive(bs, this);
                 } else { // 分割 半包和粘包
                     do {
-                        int delimIndex = indexOf(buf);
+                        int delimIndex = indexOf(buf, delim);
                         if (delimIndex < 0) break;
                         int readableLength = delimIndex - buf.position();
                         byte[] bs = new byte[readableLength];
@@ -203,7 +214,8 @@ public class AioClient extends AioBase {
                         receive(bs, this);
 
                         // 跳过 分割符的长度
-                        for (int i = 0; i < delim.length; i++) {buf.get();}
+                        for (int i = 0; i < delim.length; i++) {
+                            buf.get();}
                     } while (true);
                     buf.compact();
                 }
@@ -211,28 +223,6 @@ public class AioClient extends AioBase {
         };
         se.start();
         return se;
-    }
-
-
-    /**
-     * 查找分割符所匹配下标
-     * @param buf
-     * @return
-     */
-    protected int indexOf(ByteBuffer buf) {
-        byte[] hb = buf.array();
-        int delimIndex = -1; // 分割符所在的下标
-        for (int i = buf.position(), size = buf.limit(); i < size; i++) {
-            boolean match = true; // 是否找到和 delim 相同的字节串
-            for (int j = 0; j < delim.length; j++) {
-                match = match && (i + j < size) && delim[j] == hb[i + j];
-            }
-            if (match) {
-                delimIndex = i;
-                break;
-            }
-        }
-        return delimIndex;
     }
 
 
