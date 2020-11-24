@@ -230,7 +230,7 @@ public class AioServer extends AioBase {
                             if (delim == null) { // 没有分割符的时候
                                 byte[] bs = new byte[buf.limit()];
                                 buf.get(bs); buf.clear();
-                                receive(bs, this);
+                                exec(() -> receive(bs, this));
                             } else { // 分割 半包和粘包
                                 do {
                                     int delimIndex = indexOf(buf, delim);
@@ -238,7 +238,7 @@ public class AioServer extends AioBase {
                                     int readableLength = delimIndex - buf.position();
                                     byte[] bs = new byte[readableLength];
                                     buf.get(bs);
-                                    receive(bs, this);
+                                    exec(() -> receive(bs, this));
 
                                     // 跳过 分割符的长度
                                     for (int i = 0; i < delim.length; i++) {buf.get();}
