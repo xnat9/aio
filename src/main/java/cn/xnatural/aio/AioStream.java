@@ -30,7 +30,7 @@ public class AioStream {
     /**
      * {@link AioClient} {@link AioServer}
      */
-    protected final AioBase delegate;
+    public final AioBase delegate;
     /**
      * Write 任务对列
      */

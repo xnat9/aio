@@ -204,71 +204,80 @@ public class AioServer extends AioBase {
 
 
     /**
+     * 新连接处理
+     * @param channel
+     */
+    protected void doAccept(final AsynchronousSocketChannel channel) {
+        exec(() -> {
+            AioStream se = null;
+            try {
+                // 初始化连接
+                channel.setOption(StandardSocketOptions.SO_REUSEADDR, true);
+                channel.setOption(StandardSocketOptions.SO_RCVBUF, getInteger("so_rcvbuf", 1024 * 1024 * 2));
+                channel.setOption(StandardSocketOptions.SO_SNDBUF, getInteger("so_sndbuf", 1024 * 1024 * 2));
+                channel.setOption(StandardSocketOptions.SO_KEEPALIVE, true);
+                channel.setOption(StandardSocketOptions.TCP_NODELAY, true);
+
+                se = new AioStream(channel, this) { //创建AioStream
+                    @Override
+                    protected void doClose(AioStream stream) { connections.remove(stream); }
+
+                    @Override
+                    protected void doRead(ByteBuffer buf) {
+                        counter.increment(); // 统计
+                        if (delim == null) { // 没有分割符的时候
+                            byte[] bs = new byte[buf.limit()];
+                            buf.get(bs); buf.clear();
+                            exec(() -> receive(bs, this));
+                        } else { // 分割 半包和粘包
+                            do {
+                                int delimIndex = indexOf(buf, delim);
+                                if (delimIndex < 0) break;
+                                int readableLength = delimIndex - buf.position();
+                                byte[] bs = new byte[readableLength];
+                                buf.get(bs);
+                                exec(() -> receive(bs, this));
+
+                                // 跳过 分割符的长度
+                                for (int i = 0; i < delim.length; i++) {buf.get();}
+                            } while (true);
+                            buf.compact();
+                        }
+                    }
+                };
+                connections.offer(se);
+                se.start();
+                InetSocketAddress rAddr = ((InetSocketAddress) channel.getRemoteAddress());
+                log.info("New TCP(AIO) Connection from: " + rAddr.getHostString() + ":" + rAddr.getPort() + ", connected: " + connections.size());
+                if (connections.size() > 10) clean();
+            } catch (IOException e) {
+                if (se != null) se.close();
+                else {
+                    try { channel.close(); } catch (IOException ex) {}
+                }
+                log.error("Create AioStream error", e);
+            }
+        });
+        // 继续接入新连接
+        accept();
+    }
+
+
+    /**
      * 连接处理器
      */
     protected class AcceptHandler implements CompletionHandler<AsynchronousSocketChannel, AioServer> {
 
         @Override
         public void completed(final AsynchronousSocketChannel channel, final AioServer srv) {
-            exec(() -> {
-                AioStream se = null;
-                try {
-                    // 初始化连接
-                    channel.setOption(StandardSocketOptions.SO_REUSEADDR, true);
-                    channel.setOption(StandardSocketOptions.SO_RCVBUF, getInteger("so_rcvbuf", 1024 * 1024 * 2));
-                    channel.setOption(StandardSocketOptions.SO_SNDBUF, getInteger("so_sndbuf", 1024 * 1024 * 2));
-                    channel.setOption(StandardSocketOptions.SO_KEEPALIVE, true);
-                    channel.setOption(StandardSocketOptions.TCP_NODELAY, true);
-
-                    se = new AioStream(channel, srv) { //创建AioStream
-                        @Override
-                        protected void doClose(AioStream stream) { connections.remove(stream); }
-
-                        @Override
-                        protected void doRead(ByteBuffer buf) {
-                            counter.increment(); // 统计
-                            if (delim == null) { // 没有分割符的时候
-                                byte[] bs = new byte[buf.limit()];
-                                buf.get(bs); buf.clear();
-                                exec(() -> receive(bs, this));
-                            } else { // 分割 半包和粘包
-                                do {
-                                    int delimIndex = indexOf(buf, delim);
-                                    if (delimIndex < 0) break;
-                                    int readableLength = delimIndex - buf.position();
-                                    byte[] bs = new byte[readableLength];
-                                    buf.get(bs);
-                                    exec(() -> receive(bs, this));
-
-                                    // 跳过 分割符的长度
-                                    for (int i = 0; i < delim.length; i++) {buf.get();}
-                                } while (true);
-                                buf.compact();
-                            }
-                        }
-                    };
-                    connections.offer(se);
-                    se.start();
-                    InetSocketAddress rAddr = ((InetSocketAddress) channel.getRemoteAddress());
-                    srv.log.info("New TCP(AIO) Connection from: " + rAddr.getHostString() + ":" + rAddr.getPort() + ", connected: " + connections.size());
-                    if (connections.size() > 10) clean();
-                } catch (IOException e) {
-                    if (se != null) se.close();
-                    else {
-                        try { channel.close(); } catch (IOException ex) {}
-                    }
-                    log.error("Create AioStream error", e);
-                }
-            });
-            // 继续接入新连接
-            srv.accept();
+            doAccept(channel);
         }
 
 
         @Override
         public void failed(Throwable ex, AioServer srv) {
             if (!(ex instanceof ClosedChannelException)) {
-                srv.log.error(ex.getMessage() == null ? ex.getClass().getSimpleName() : ex.getMessage(), ex);
+                log.error(ex.getMessage() == null ? ex.getClass().getSimpleName() : ex.getMessage(), ex);
             }
         }
     }

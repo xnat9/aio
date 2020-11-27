@@ -8,7 +8,7 @@ import java.util.concurrent.ExecutorService;
 /**
  * {@link AioClient}, {@link AioServer} 基类
  */
-abstract class AioBase {
+public abstract class AioBase {
     /**
      * 属性集
      */
@@ -37,7 +37,7 @@ abstract class AioBase {
      * @param delim 分隔符
      * @return 下标位置
      */
-    protected int indexOf(ByteBuffer buf, byte[] delim) {
+    public static int indexOf(ByteBuffer buf, byte[] delim) {
         byte[] hb = buf.array();
         int delimIndex = -1; // 分割符所在的下标
         for (int i = buf.position(), size = buf.limit(); i < size; i++) {
