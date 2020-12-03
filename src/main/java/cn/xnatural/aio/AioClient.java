@@ -64,11 +64,11 @@ public class AioClient extends AioBase {
 
     @EL(name = "sys.stopping", async = true)
     public void stop() {
+        group.shutdown();
         streamMap.forEach((hp, ls) -> {
             for (Iterator<AioStream> itt = ls.iterator(); itt.hasNext(); ) {
                 AioStream se = itt.next();
-                itt.remove();
-                se.close();
+                itt.remove(); se.close();
             }
         });
     }
@@ -83,6 +83,7 @@ public class AioClient extends AioBase {
      * @param okFn 成功回调
      */
     public AioClient send(String host, Integer port, byte[] msgBytes, Consumer<Exception> failFn, Consumer<AioStream> okFn) {
+        if (group.isShutdown()) return this;
         if (host == null || host.isEmpty()) throw new IllegalArgumentException("host must not be empty");
         if (port == null) throw new IllegalArgumentException("port must not be null");
         if (msgBytes == null || msgBytes.length < 1) throw new IllegalArgumentException("msgBytes must not be null");
@@ -98,7 +99,7 @@ public class AioClient extends AioBase {
         };
         // 把发送在数据组装成 ByteBuffer
         ByteBuffer msgBuf = ByteBuffer.allocate(msgBytes.length + (delim == null ? 0 : delim.length));
-        msgBuf.put(msgBytes); if (delim != null) msgBuf.put(delim);
+        msgBuf.put(msgBytes); if (delim != null) msgBuf.put(delim); msgBuf.flip();
         final BiConsumer<Exception, AioStream> subFailFn = new BiConsumer<Exception, AioStream>() { // AioStream 写入流错误的回调函数
             @Override
             public void accept(Exception ex, AioStream session) {
@@ -143,36 +144,34 @@ public class AioClient extends AioBase {
 
 
     /**
-     * 获取AioSession
-     * @param host
-     * @param port
-     * @return
+     * 获取 一个可用 的 {@link AioStream}
+     * @param host 主机
+     * @param port 端口
+     * @return {@link AioStream}
      */
     protected AioStream getSession(String host, Integer port) {
         String key = host + ":" + port;
-        AioStream stream = null;
         SafeList<AioStream> ls = streamMap.get(key);
         if (ls == null) {
             synchronized (streamMap) {
                 ls = streamMap.get(key);
                 if (ls == null) {
                     ls = new SafeList<>(); streamMap.put(key, ls);
-                    stream = create(host, port); ls.add(stream);
+                    ls.add(create(host, port));
                 }
             }
         }
 
-        stream = ls.findAny(se -> se.queue.size() < getInteger("maxWaitPerStream", 2));
+        AioStream stream = ls.findAny(se -> se.queue.size() < getInteger("maxWaitPerStream", 2));
         if (stream == null) {
             stream = create(host, port); ls.add(stream);
         }
-
         return stream;
     }
 
 
     /**
-     * 创建 AioSession
+     * 创建 连接 AioStream
      * @param host 目标主机
      * @param port 目标端口
      * @return {@link AioStream}
@@ -192,9 +191,9 @@ public class AioClient extends AioBase {
             log.info("New TCP(AIO) connection to '" + key + "'");
         } catch(Exception ex) {
             try {channel.close();} catch(Exception exx) {}
-            throw new RuntimeException("连接错误. $key", ex);
+            throw new RuntimeException("Connect error. " + key, ex);
         }
-        AioStream se = new AioStream(channel, this) {
+        final AioStream se = new AioStream(channel, this) {
             @Override
             protected void doClose(AioStream stream) { streamMap.get(key).remove(stream); }
 

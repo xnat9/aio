@@ -58,9 +58,9 @@ public class AioStream {
 
 
     /**
-     * 创建 AioSession
+     * 创建 {@link AioStream}
      * @param channel {@link AsynchronousSocketChannel}
-     * @param delegate
+     * @param delegate {@link AioClient} or {@link AioServer}
      */
     public AioStream(AsynchronousSocketChannel channel, AioBase delegate) {
         if (channel == null) throw new NullPointerException("channel must not be null");
@@ -83,6 +83,9 @@ public class AioStream {
      */
     public void close() {
         if (closed.compareAndSet(false, true)) {
+            for (int i = 0; !queue.isEmpty() && i < 3; i++) { //如果有数据没处理完 则稍等
+                try { Thread.sleep(500); } catch (InterruptedException e) {/** ignore **/}
+            }
             try { channel.shutdownOutput(); } catch(Exception ex) {}
             try { channel.shutdownInput(); } catch(Exception ex) {}
             try { channel.close(); } catch(Exception ex) {}
@@ -91,9 +94,17 @@ public class AioStream {
     }
 
 
+    /**
+     * 子类重写, 清除对当前{@link AioStream}的引用
+     * @param stream
+     */
     protected void doClose(AioStream stream) {}
 
 
+    /**
+     * 子类 重写 读数据
+     * @param buf
+     */
     protected void doRead(ByteBuffer buf) {}
 
 
@@ -104,12 +115,10 @@ public class AioStream {
      * @param okFn 成功回调函数
      */
     protected void write(ByteBuffer data, BiConsumer<Exception, AioStream> failFn, Runnable okFn) {
-        if (closed.get()) throw new RuntimeException("Already closed");
         if (data == null) throw new IllegalArgumentException("Write data us empty");
         lastUsed = System.currentTimeMillis();
         queue.offer(() -> { // 排对发送消息. 避免 WritePendingException
             try {
-                data.flip();
                 channel.write(data).get(delegate.getInteger("writeTimeout", 10000), TimeUnit.MILLISECONDS);
                 if (okFn != null) delegate.exec(okFn);
             } catch (Exception ex) {
@@ -141,7 +150,7 @@ public class AioStream {
             write(ByteBuffer.wrap(bs), failFn, okFn);
         } else {
             ByteBuffer msgBuf = ByteBuffer.allocate(bs.length + delim.length);
-            msgBuf.put(bs); msgBuf.put(delim);
+            msgBuf.put(bs); msgBuf.put(delim); msgBuf.flip();
             write(msgBuf, failFn, okFn);
         }
     }
@@ -156,7 +165,7 @@ public class AioStream {
             write(ByteBuffer.wrap(bs), null, null);
         } else {
             ByteBuffer msgBuf = ByteBuffer.allocate(bs.length + delim.length);
-            msgBuf.put(bs); msgBuf.put(delim);
+            msgBuf.put(bs); msgBuf.put(delim); msgBuf.flip();
             write(msgBuf, null, null);
         }
     }
@@ -167,7 +176,7 @@ public class AioStream {
      * 遍历消息对列发送
      */
     protected void trigger() { // 触发发送
-        if (queue.isEmpty()) return;
+        if (closed.get() || queue.isEmpty()) return;
         if (!writing.compareAndSet(false, true)) return;
         delegate.exec(() -> {
             try {
@@ -190,6 +199,34 @@ public class AioStream {
     }
 
 
+    /**
+     * 远程连接地址
+     * @return
+     */
+    public String getRemoteAddress() {
+        try {
+            return channel.getRemoteAddress().toString();
+        } catch (IOException e) {
+            log.error("",e);
+        }
+        return null;
+    }
+
+
+    /**
+     * 本地连接地址
+     * @return
+     */
+    public String getLocalAddress() {
+        try {
+            return channel.getLocalAddress().toString();
+        } catch (IOException e) {
+            log.error("",e);
+        }
+        return null;
+    }
+
+
     @Override
     public String toString() { return super.toString() + "[" + channel.toString() + "]"; }
 
@@ -206,16 +243,15 @@ public class AioStream {
             if (count > 0) {
                 buf.flip();
                 doRead(buf);
+                try { // 同一时间只有一个 read, 避免 ReadPendingException
+                    read();
+                } catch (Exception ex) {
+                    log.error(delegate.getClass().getName(), ex);
+                    close();
+                }
             } else {
                 // 接收字节为空
                 if (!channel.isOpen()) close();
-            }
-            // 同一时间只有一个 read, 避免 ReadPendingException
-            try {
-                read();
-            } catch (Exception ex) {
-                log.error(delegate instanceof AioClient ? "AioClient" : "AioServer", ex);
-                close();
             }
         }
 

@@ -37,7 +37,7 @@ attrs.put("hp", ":7001"); //hp -> [ip]:端口. 监听7001端口
 
 AioServer server = new AioServer(attrs, exec) { // 创建服务端
     @Override
-    protected void receive(byte[] bs, AioStream stream) {
+    protected void receive(byte[] bs, AioStream stream) { //数据接收
         log.info("服务端 -> 接收数据: " + new String(bs) + ", length: " + bs.length);
         stream.reply(
                 ("服务端 回消息: oo").getBytes(), //消息体字节

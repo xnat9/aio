@@ -19,7 +19,7 @@ import java.util.function.Supplier;
 
 
 /**
- * TCP(AIO) 服务
+ * TCP(AIO) 服务. 监听TCP端口, 处理端口接收到的数据
  */
 public class AioServer extends AioBase {
     protected static final Logger                                                  log         = LoggerFactory.getLogger(AioServer.class);
@@ -40,7 +40,9 @@ public class AioServer extends AioBase {
      * [host]:port
      */
     protected final String                                                         hpCfg;
-    // 当前连会话
+    /**
+     * 当前所有的连接会话
+     */
     protected final Queue<AioStream>                                               connections = new ConcurrentLinkedQueue<>();
     /**
      * 统计器
@@ -59,7 +61,7 @@ public class AioServer extends AioBase {
      *              maxMsgSize: socket 每次取数据的最大
      *              writeTimeout: 数据写入超时时间. 单位:毫秒
      *              backlog: 排队连接
-     *              aioSession.maxIdle: 连接最大存活时间
+     *              connection.maxIdle: 连接最大存活时间
      * @param exec
      */
     public AioServer(Map<String, Object> attrs, ExecutorService exec) {
@@ -80,25 +82,24 @@ public class AioServer extends AioBase {
      * 启动
      */
     @EL(name = "sys.starting", async = true)
-    public void start() {
-        if (ssc != null) throw new RuntimeException("AioServer is already running");
+    public AioServer start() {
+        if (ssc != null) throw new RuntimeException(AioServer.class.getSimpleName() + " is already running");
         try {
             AsynchronousChannelGroup cg = AsynchronousChannelGroup.withThreadPool(exec);
             ssc = AsynchronousServerSocketChannel.open(cg);
             ssc.setOption(StandardSocketOptions.SO_REUSEADDR, true);
-            ssc.setOption(StandardSocketOptions.SO_RCVBUF, getInteger("so_revbuf", 1024 * 1024));
+            ssc.setOption(StandardSocketOptions.SO_RCVBUF, getInteger("so_revbuf", 1024 * 1024 * 1));
 
             String host = hpCfg.split(":")[0];
-            InetSocketAddress addr;
-            if (host != null && !host.isEmpty()) {addr = new InetSocketAddress(host, port);}
-            else addr = new InetSocketAddress(port);
+            InetSocketAddress addr = (host != null && !host.isEmpty()) ? new InetSocketAddress(host, port) : new InetSocketAddress(port);
 
             ssc.bind(addr, getInteger("backlog", 128));
             log.info("Start listen TCP(AIO) {}", port);
             accept();
         } catch (IOException ex) {
-            throw new RuntimeException("Start error", ex);
+            throw new RuntimeException(AioServer.class.getSimpleName() + " starting error", ex);
         }
+        return this;
     }
 
 
@@ -108,11 +109,11 @@ public class AioServer extends AioBase {
     @EL(name = "sys.stopping", async = true)
     public void stop() {
         if (ssc != null) {
-            try {
-                ssc.close();
-            } catch (IOException e) {
-                // ignore
-            }
+            try { ssc.close(); } catch (IOException e) { /** ignore **/ }
+        }
+        for (Iterator<AioStream> itt = connections.iterator(); itt.hasNext(); ) {
+            AioStream stream = itt.next();
+            itt.remove(); stream.close();
         }
     }
 
@@ -131,10 +132,14 @@ public class AioServer extends AioBase {
     protected void accept() { ssc.accept(this, acceptor); }
 
 
+    /**
+     * hp -> host:port
+     * @return
+     */
     @EL(name = {"aio.hp", "tcp.hp"}, async = false)
     public String getHp() {
         String ip = hpCfg.split(":")[0];
-        if (ip == null || ip.isEmpty() || ip == "localhost") {ip = ipv4();}
+        if (ip == null || ip.isEmpty() || "localhost".equals(ip)) {ip = ipv4();}
         return ip + ":" + port;
     }
 
@@ -172,7 +177,7 @@ public class AioServer extends AioBase {
     protected void clean() {
         int size = connections.size();
         if (size < 1) return;
-        long expire = Duration.ofSeconds(getInteger("aioSession.maxIdle",
+        long expire = Duration.ofSeconds(getInteger("connection.maxIdle",
                 ((Supplier<Integer>) () -> {
                     if (size > 80) return 60;
                     if (size > 50) return 120;
@@ -194,10 +199,10 @@ public class AioServer extends AioBase {
             if (se == null) break;
             if (!se.channel.isOpen()) {
                 itt.remove(); se.close();
-                log.info("Cleaned unavailable AioSession: " + se + ", connected: " + connections.size());
+                log.info("Cleaned unavailable AioStream: " + se + ", connected: " + connections.size());
             } else if (System.currentTimeMillis() - se.lastUsed > expire) {
                 limit--; itt.remove(); se.close();
-                log.info("Closed expired AioSession: " + se + ", connected: " + connections.size());
+                log.info("Closed expired AioStream: " + se + ", connected: " + connections.size());
             }
         }
     }
@@ -205,7 +210,7 @@ public class AioServer extends AioBase {
 
     /**
      * 新连接处理
-     * @param channel
+     * @param channel {@link AsynchronousSocketChannel}
      */
     protected void doAccept(final AsynchronousSocketChannel channel) {
         exec(() -> {
@@ -247,15 +252,14 @@ public class AioServer extends AioBase {
                 };
                 connections.offer(se);
                 se.start();
-                InetSocketAddress rAddr = ((InetSocketAddress) channel.getRemoteAddress());
-                log.info("New TCP(AIO) Connection from: " + rAddr.getHostString() + ":" + rAddr.getPort() + ", connected: " + connections.size());
+                log.info("New TCP(AIO) Connection from: " + se.getRemoteAddress() + ", connected: " + connections.size());
                 if (connections.size() > 10) clean();
             } catch (IOException e) {
                 if (se != null) se.close();
                 else {
                     try { channel.close(); } catch (IOException ex) {}
                 }
-                log.error("Create AioStream error", e);
+                log.error("Create " + AioStream.class.getSimpleName() + " error", e);
             }
         });
         // 继续接入新连接
@@ -269,7 +273,7 @@ public class AioServer extends AioBase {
     protected class AcceptHandler implements CompletionHandler<AsynchronousSocketChannel, AioServer> {
 
         @Override
-        public void completed(final AsynchronousSocketChannel channel, final AioServer srv) {
+        public void completed(AsynchronousSocketChannel channel, AioServer srv) {
             doAccept(channel);
         }
 

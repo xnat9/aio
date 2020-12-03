@@ -8,11 +8,19 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.atomic.AtomicInteger;
 
-public class Test {
+public class AioTest {
 
     public static void main(String[] args) throws Exception {
-        ExecutorService exec = Executors.newFixedThreadPool(2);
+        ExecutorService exec = Executors.newFixedThreadPool(2, new ThreadFactory() {
+            AtomicInteger i = new AtomicInteger(1);
+            @Override
+            public Thread newThread(Runnable r) {
+                return new Thread(r, "aio-" + i.getAndIncrement());
+            }
+        });
         Map<String, Object> attrs = new HashMap<>();
         attrs.put("delimiter", "\n");
         AioServer server = new AioServer(attrs, exec) {
@@ -37,7 +45,7 @@ public class Test {
 
         AioClient client = new AioClient(attrs, exec) {
             @Override
-            protected void receive(byte[] bs, AioStream stream) {
+            protected void receive(byte[] bs, AioStream stream) { //数据接收
                 log.info("客户端 -> 接收数据: " + new String(bs) + ", length: " + bs.length);
                 try {
                     Thread.sleep(1000 * 2);
@@ -52,9 +60,9 @@ public class Test {
         client.send("localhost", 7001, "Hello1".getBytes());
         // client.send("localhost", 7001, "Hello2".getBytes());
 
-        Thread.sleep(1000 * 60 * 1);
+        Thread.sleep(1000 * 30 * 1);
         server.stop();
         client.stop();
-        exec.shutdown();
+        // exec.shutdown();
     }
 }
