@@ -1,6 +1,5 @@
 package cn.xnatural.aio;
 
-import cn.xnatural.enet.event.EL;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -61,9 +60,11 @@ public class AioClient extends AioBase {
     }
 
 
-
-    @EL(name = "sys.stopping", async = true)
+    /**
+     * 停止,清除连接
+     */
     public void stop() {
+        if (group.isShutdown()) return;
         group.shutdown();
         streamMap.forEach((hp, ls) -> {
             for (Iterator<AioStream> itt = ls.iterator(); itt.hasNext(); ) {

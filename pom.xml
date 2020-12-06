@@ -7,16 +7,11 @@
     <groupId>cn.xnatural.aio</groupId>
     <artifactId>aio</artifactId>
     <packaging>jar</packaging>
-    <version>1.0.2</version>
+    <version>1.0.3</version>
 
     <url>https://gitee.com/xnat/aio</url>
 
     <dependencies>
-        <dependency>
-            <groupId>cn.xnatural.enet</groupId>
-            <artifactId>enet-event</artifactId>
-            <version>0.0.15</version>
-        </dependency>
         <dependency>
             <groupId>org.slf4j</groupId>
             <artifactId>slf4j-api</artifactId>

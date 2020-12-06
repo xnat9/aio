@@ -1,6 +1,5 @@
 package cn.xnatural.aio;
 
-import cn.xnatural.enet.event.EL;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -29,13 +28,9 @@ public class AioServer extends AioBase {
     protected final        CompletionHandler<AsynchronousSocketChannel, AioServer> acceptor    = new AcceptHandler();
     protected              AsynchronousServerSocketChannel                         ssc;
     /**
-     * 绑定配置 hp -> host:port
-     */
-    protected
-    /**
      * 监听的端口
      */
-    final                  Integer                                                 port;
+    protected final                  Integer port;
     /**
      * [host]:port
      */
@@ -81,7 +76,6 @@ public class AioServer extends AioBase {
     /**
      * 启动
      */
-    @EL(name = "sys.starting", async = true)
     public AioServer start() {
         if (ssc != null) throw new RuntimeException(AioServer.class.getSimpleName() + " is already running");
         try {
@@ -106,8 +100,8 @@ public class AioServer extends AioBase {
     /**
      * 关闭
      */
-    @EL(name = "sys.stopping", async = true)
     public void stop() {
+        if (!ssc.isOpen()) return;
         if (ssc != null) {
             try { ssc.close(); } catch (IOException e) { /** ignore **/ }
         }
@@ -133,47 +127,10 @@ public class AioServer extends AioBase {
 
 
     /**
-     * hp -> host:port
-     * @return
-     */
-    @EL(name = {"aio.hp", "tcp.hp"}, async = false)
-    public String getHp() {
-        String ip = hpCfg.split(":")[0];
-        if (ip == null || ip.isEmpty() || "localhost".equals(ip)) {ip = ipv4();}
-        return ip + ":" + port;
-    }
-
-
-    /**
-     * 获取本机 ip 地址
-     * @return
-     */
-    protected String ipv4() {
-        try {
-            for (Enumeration<NetworkInterface> en = NetworkInterface.getNetworkInterfaces(); en.hasMoreElements(); ) {
-                NetworkInterface current = en.nextElement();
-                if (!current.isUp() || current.isLoopback() || current.isVirtual()) continue;
-                Enumeration<InetAddress> addresses = current.getInetAddresses();
-                while (addresses.hasMoreElements()) {
-                    InetAddress addr = addresses.nextElement();
-                    if (addr.isLoopbackAddress()) continue;
-                    if (addr instanceof Inet4Address) {
-                        return addr.getHostAddress();
-                    }
-                }
-            }
-        } catch (SocketException e) {
-            log.error("", e);
-        }
-        return null;
-    }
-
-
-    /**
      * 清除已关闭或已过期的连接
      * 接收系统心跳事件
      */
-    @EL(name = "sys.heartbeat", async = true)
+    // @EL(name = "sys.heartbeat", async = true)
     protected void clean() {
         int size = connections.size();
         if (size < 1) return;
@@ -265,6 +222,50 @@ public class AioServer extends AioBase {
         // 继续接入新连接
         accept();
     }
+
+
+    /**
+     * hp -> host:port
+     * @return
+     */
+    public String getHp() {
+        String ip = hpCfg.split(":")[0];
+        if (ip == null || ip.isEmpty() || "localhost".equals(ip)) {ip = ipv4();}
+        return ip + ":" + port;
+    }
+
+
+    /**
+     * 暴露的端口
+     * @return
+     */
+    public Integer getPort() { return port; }
+
+
+    /**
+     * 获取本机 ip 地址
+     * @return
+     */
+    protected String ipv4() {
+        try {
+            for (Enumeration<NetworkInterface> en = NetworkInterface.getNetworkInterfaces(); en.hasMoreElements(); ) {
+                NetworkInterface current = en.nextElement();
+                if (!current.isUp() || current.isLoopback() || current.isVirtual()) continue;
+                Enumeration<InetAddress> addresses = current.getInetAddresses();
+                while (addresses.hasMoreElements()) {
+                    InetAddress addr = addresses.nextElement();
+                    if (addr.isLoopbackAddress()) continue;
+                    if (addr instanceof Inet4Address) {
+                        return addr.getHostAddress();
+                    }
+                }
+            }
+        } catch (SocketException e) {
+            log.error("", e);
+        }
+        return null;
+    }
+
 
 
     /**
