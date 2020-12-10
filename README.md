@@ -9,7 +9,7 @@
 <dependency>
     <groupId>cn.xnatural.aio</groupId>
     <artifactId>aio</artifactId>
-    <version>1.0.2</version>
+    <version>1.0.4</version>
 </dependency>
 ```
 
