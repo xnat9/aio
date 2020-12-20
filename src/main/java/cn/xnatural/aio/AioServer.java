@@ -246,7 +246,7 @@ public class AioServer extends AioBase {
      * 获取本机 ip 地址
      * @return
      */
-    protected String ipv4() {
+    public static String ipv4() {
         try {
             for (Enumeration<NetworkInterface> en = NetworkInterface.getNetworkInterfaces(); en.hasMoreElements(); ) {
                 NetworkInterface current = en.nextElement();
