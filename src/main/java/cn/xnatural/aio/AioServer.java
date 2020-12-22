@@ -66,6 +66,7 @@ public class AioServer extends AioBase {
             String delimiter = getStr("delimiter", null);
             if (delimiter != null && !delimiter.isEmpty()) delim = delimiter.getBytes("utf-8");
             else delim = null;
+            attrs.put("delim", delim);
             port = Integer.valueOf(hpCfg.split(":")[1]);
         } catch (Exception ex) {
             throw new IllegalArgumentException("AioServer hp 格式错误. " + hpCfg, ex);
