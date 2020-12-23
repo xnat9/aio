@@ -132,7 +132,7 @@ public class AioServer extends AioBase {
      * 接收系统心跳事件
      */
     // @EL(name = "sys.heartbeat", async = true)
-    protected void clean() {
+    public void clean() {
         int size = connections.size();
         if (size < 1) return;
         long expire = Duration.ofSeconds(getInteger("connection.maxIdle",
