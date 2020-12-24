@@ -30,7 +30,7 @@ public class AioServer extends AioBase {
     /**
      * 监听的端口
      */
-    protected final                  Integer port;
+    protected final                  Integer                                       port;
     /**
      * [host]:port
      */
@@ -46,7 +46,7 @@ public class AioServer extends AioBase {
     /**
      * 数据分割符(半包和粘包)
      */
-    protected final byte[]                              delim;
+    protected final byte[]                                                         delim;
 
 
     /**

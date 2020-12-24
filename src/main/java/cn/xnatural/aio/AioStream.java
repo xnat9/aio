@@ -118,10 +118,11 @@ public class AioStream {
         if (data == null) throw new IllegalArgumentException("Write data us empty");
         lastUsed = System.currentTimeMillis();
         queue.offer(() -> { // 排对发送消息. 避免 WritePendingException
+            Exception exx = null;
             try {
                 channel.write(data).get(delegate.getInteger("writeTimeout", 10000), TimeUnit.MILLISECONDS);
-                if (okFn != null) delegate.exec(okFn);
             } catch (Exception ex) {
+                exx = ex;
                 close();
                 if (failFn != null) delegate.exec(() -> failFn.accept(ex, this));
                 else {
@@ -134,6 +135,7 @@ public class AioStream {
                     }
                 }
             }
+            if (okFn != null && exx == null) delegate.exec(okFn);
         });
         trigger();
     }
