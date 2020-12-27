@@ -63,8 +63,8 @@ public class AioStream {
      * @param delegate {@link AioClient} or {@link AioServer}
      */
     public AioStream(AsynchronousSocketChannel channel, AioBase delegate) {
-        if (channel == null) throw new NullPointerException("channel must not be null");
-        if (delegate == null) throw new NullPointerException("exec must not be null");
+        if (channel == null) throw new NullPointerException("Param channel required");
+        if (delegate == null) throw new NullPointerException("Param exec required");
         this.channel = channel;
         this.delegate = delegate;
         this.buf = ByteBuffer.allocate(delegate.getInteger("maxMsgSize", 1024 * 1024));
@@ -115,7 +115,14 @@ public class AioStream {
      * @param okFn 成功回调函数
      */
     protected void write(ByteBuffer data, BiConsumer<Exception, AioStream> failFn, Runnable okFn) {
-        if (data == null) throw new IllegalArgumentException("Write data us empty");
+        if (data == null) throw new IllegalArgumentException("Param data required");
+        if (closed.get()) {
+            if (failFn == null) {
+                log.error("Already closed. " + this);
+            } else {
+                failFn.accept(new ClosedChannelException(), this);
+            }
+        }
         lastUsed = System.currentTimeMillis();
         queue.offer(() -> { // 排对发送消息. 避免 WritePendingException
             Exception exx = null;
@@ -127,11 +134,7 @@ public class AioStream {
                 if (failFn != null) delegate.exec(() -> failFn.accept(ex, this));
                 else {
                     if (!(ex instanceof ClosedChannelException)) {
-                        try {
-                            log.error(channel.getLocalAddress().toString() + " ->" + channel.getRemoteAddress().toString(), ex);
-                        } catch (IOException e) {
-                            log.error("", e);
-                        }
+                        log.error(channel.toString(), ex);
                     }
                 }
             }
@@ -171,7 +174,6 @@ public class AioStream {
             write(msgBuf, null, null);
         }
     }
-
 
 
     /**
@@ -230,7 +232,7 @@ public class AioStream {
 
 
     @Override
-    public String toString() { return super.toString() + "[" + channel.toString() + "]"; }
+    public String toString() { return AioStream.class.getSimpleName() + "@" + Integer.toHexString(hashCode()) + "[" + channel.toString() + "]"; }
 
 
 

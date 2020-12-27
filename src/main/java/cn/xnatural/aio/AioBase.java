@@ -1,6 +1,12 @@
 package cn.xnatural.aio;
 
+import java.io.UnsupportedEncodingException;
+import java.net.Inet4Address;
+import java.net.InetAddress;
+import java.net.NetworkInterface;
+import java.net.SocketException;
 import java.nio.ByteBuffer;
+import java.util.Enumeration;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
@@ -51,6 +57,47 @@ public abstract class AioBase {
             }
         }
         return delimIndex;
+    }
+
+
+    /**
+     * 字符串转byte[]
+     * 屏蔽 UnsupportedEncodingException
+     * @param str
+     * @param charset
+     * @return
+     */
+    public byte[] toByte(String str, String charset) {
+        try {
+            return str.getBytes(charset);
+        } catch (UnsupportedEncodingException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+
+    /**
+     * 获取本机 ip 地址
+     * @return ip地址
+     */
+    public static String ipv4() {
+        try {
+            for (Enumeration<NetworkInterface> en = NetworkInterface.getNetworkInterfaces(); en.hasMoreElements(); ) {
+                NetworkInterface current = en.nextElement();
+                if (!current.isUp() || current.isLoopback() || current.isVirtual()) continue;
+                Enumeration<InetAddress> addresses = current.getInetAddresses();
+                while (addresses.hasMoreElements()) {
+                    InetAddress addr = addresses.nextElement();
+                    if (addr.isLoopbackAddress()) continue;
+                    if (addr instanceof Inet4Address) {
+                        return addr.getHostAddress();
+                    }
+                }
+            }
+        } catch (SocketException e) {
+            AioServer.log.error("", e);
+        }
+        return null;
     }
 
 

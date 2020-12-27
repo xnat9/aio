@@ -17,9 +17,7 @@ public class AioTest {
         ExecutorService exec = Executors.newFixedThreadPool(2, new ThreadFactory() {
             AtomicInteger i = new AtomicInteger(1);
             @Override
-            public Thread newThread(Runnable r) {
-                return new Thread(r, "aio-" + i.getAndIncrement());
-            }
+            public Thread newThread(Runnable r) { return new Thread(r, "aio-" + i.getAndIncrement()); }
         });
         Map<String, Object> attrs = new HashMap<>();
         attrs.put("delimiter", "\n");

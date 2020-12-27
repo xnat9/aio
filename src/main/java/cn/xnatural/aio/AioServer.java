@@ -4,7 +4,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
-import java.net.*;
+import java.net.InetSocketAddress;
+import java.net.StandardSocketOptions;
 import java.nio.ByteBuffer;
 import java.nio.channels.*;
 import java.text.SimpleDateFormat;
@@ -244,40 +245,12 @@ public class AioServer extends AioBase {
 
 
     /**
-     * 获取本机 ip 地址
-     * @return
-     */
-    public static String ipv4() {
-        try {
-            for (Enumeration<NetworkInterface> en = NetworkInterface.getNetworkInterfaces(); en.hasMoreElements(); ) {
-                NetworkInterface current = en.nextElement();
-                if (!current.isUp() || current.isLoopback() || current.isVirtual()) continue;
-                Enumeration<InetAddress> addresses = current.getInetAddresses();
-                while (addresses.hasMoreElements()) {
-                    InetAddress addr = addresses.nextElement();
-                    if (addr.isLoopbackAddress()) continue;
-                    if (addr instanceof Inet4Address) {
-                        return addr.getHostAddress();
-                    }
-                }
-            }
-        } catch (SocketException e) {
-            log.error("", e);
-        }
-        return null;
-    }
-
-
-
-    /**
      * 连接处理器
      */
     protected class AcceptHandler implements CompletionHandler<AsynchronousSocketChannel, AioServer> {
 
         @Override
-        public void completed(AsynchronousSocketChannel channel, AioServer srv) {
-            doAccept(channel);
-        }
+        public void completed(AsynchronousSocketChannel channel, AioServer srv) { doAccept(channel); }
 
 
         @Override

@@ -10,10 +10,7 @@ import java.nio.ByteBuffer;
 import java.nio.channels.AsynchronousChannelGroup;
 import java.nio.channels.AsynchronousSocketChannel;
 import java.nio.channels.ClosedChannelException;
-import java.util.ArrayList;
-import java.util.Iterator;
-import java.util.Map;
-import java.util.Random;
+import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -50,7 +47,7 @@ public class AioClient extends AioBase {
         super(attrs, exec);
         try {
             String delimiter = getStr("delimiter", null);
-            if (delimiter != null && !delimiter.isEmpty()) delim = delimiter.getBytes("utf-8");
+            if (delimiter != null && !delimiter.isEmpty()) delim = delimiter.getBytes(attrs.getOrDefault("charset", "utf-8").toString());
             else delim = null;
             attrs.put("delim", delim);
             this.group = AsynchronousChannelGroup.withThreadPool(exec);
@@ -67,27 +64,30 @@ public class AioClient extends AioBase {
         if (group.isShutdown()) return;
         group.shutdown();
         streamMap.forEach((hp, ls) -> {
-            for (Iterator<AioStream> itt = ls.iterator(); itt.hasNext(); ) {
-                AioStream se = itt.next();
-                itt.remove(); se.close();
-            }
+            ls.withWriteLock(() -> {
+                for (Iterator<AioStream> itt = ls.iterator(); itt.hasNext(); ) {
+                    AioStream se = itt.next();
+                    itt.remove(); se.close();
+                }
+            });
         });
     }
 
 
     /**
      * 发送消息
-     * @param host 主机名
+     * @param host 主机名/ip
      * @param port 端口
      * @param msgBytes 消息内容
      * @param failFn 失败回调
      * @param okFn 成功回调
+     * @return {@link AioClient}
      */
     public AioClient send(String host, Integer port, byte[] msgBytes, Consumer<Exception> failFn, Consumer<AioStream> okFn) {
         if (group.isShutdown()) return this;
-        if (host == null || host.isEmpty()) throw new IllegalArgumentException("host must not be empty");
-        if (port == null) throw new IllegalArgumentException("port must not be null");
-        if (msgBytes == null || msgBytes.length < 1) throw new IllegalArgumentException("msgBytes must not be null");
+        if (host == null || host.isEmpty()) throw new IllegalArgumentException("Param host not empty");
+        if (port == null) throw new IllegalArgumentException("Param port required");
+        if (msgBytes == null || msgBytes.length < 1) throw new IllegalArgumentException("Param msgBytes not empty");
         String key = host + ":" + port;
         final Supplier<AioStream> streamSupplier = () -> { // aioStream 获取函数
             try {
@@ -110,11 +110,8 @@ public class AioClient extends AioBase {
                         se.write(msgBuf, this, (okFn == null ? null : () -> okFn.accept(se)));
                     }
                 } else {
-                    try {
-                        log.error("Write to " + key + " error. " + session.channel.getLocalAddress() + " -> " + session.channel.getRemoteAddress(), ex);
-                    } catch (IOException e) {
-                        log.error("", e);
-                    }
+                    if (failFn == null) log.error("Write to " + key + " error. " + session.toString(), ex);
+                    else failFn.accept(ex);
                 }
             }
         };
@@ -128,10 +125,10 @@ public class AioClient extends AioBase {
 
     /**
      * {@link #send(String, Integer, byte[], Consumer, Consumer)}
-     * @param host
-     * @param port
-     * @param msgBytes
-     * @return
+     * @param host 主机名/ip
+     * @param port 端口
+     * @param msgBytes 消息字节
+     * @return {@link AioClient}
      */
     public AioClient send(String host, Integer port, byte[] msgBytes) { return send(host, port, msgBytes, null, null); }
 
@@ -214,8 +211,7 @@ public class AioClient extends AioBase {
                         receive(bs, this);
 
                         // 跳过 分割符的长度
-                        for (int i = 0; i < delim.length; i++) {
-                            buf.get();}
+                        for (int i = 0; i < delim.length; i++) { buf.get();}
                     } while (true);
                     buf.compact();
                 }
@@ -231,7 +227,7 @@ public class AioClient extends AioBase {
      * @param <E>
      */
     protected class SafeList<E> {
-        protected final ArrayList<E>  data = new ArrayList<>();
+        protected final LinkedList<E> data = new LinkedList<>();
         protected final ReadWriteLock lock = new ReentrantReadWriteLock();
 
         public E findAny(Function<E, Boolean> fn) {
@@ -244,25 +240,6 @@ public class AioClient extends AioBase {
                 lock.readLock().unlock();
             }
             return null;
-        }
-
-        /**
-         * 随机取一个 元素
-         * @param predicate 符合条件的元素
-         * @return
-         */
-        public E findRandom(Predicate<E> predicate) {
-            try {
-                lock.readLock().lock();
-                if (data.isEmpty()) return null;
-                if (predicate == null) {
-                    return data.get(new Random().nextInt(data.size()));
-                } else {
-                    return data.stream().filter(predicate).findAny().orElse(null);
-                }
-            } finally {
-                lock.readLock().unlock();
-            }
         }
 
         public void withWriteLock(Runnable fn) {
@@ -291,7 +268,7 @@ public class AioClient extends AioBase {
 
         public boolean isEmpty() { return data.isEmpty(); }
 
-        public boolean contains(Object o) {
+        public boolean contains(E o) {
             try {
                 lock.readLock().lock();
                 return data.contains(o);
@@ -300,7 +277,7 @@ public class AioClient extends AioBase {
             }
         }
 
-        public boolean remove(Object o) {
+        public boolean remove(E o) {
             try {
                 lock.writeLock().lock();
                 return data.remove(o);
