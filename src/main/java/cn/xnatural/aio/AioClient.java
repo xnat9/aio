@@ -46,7 +46,6 @@ public class AioClient extends AioBase {
      * 创建 {@link AioClient}
      * @param attrs 属性集
      *              delimiter: 分隔符
-     *              maxMsgSize: socket 每次取数据的最大
      *              writeTimeout: 数据写入超时时间. 单位:毫秒
      *              connectTimeout: 连接超时时间. 单位:毫秒
      * @param exec 线程池
@@ -191,8 +190,8 @@ public class AioClient extends AioBase {
             channel.setOption(StandardSocketOptions.TCP_NODELAY, true);
             channel.setOption(StandardSocketOptions.SO_REUSEADDR, true);
             channel.setOption(StandardSocketOptions.SO_KEEPALIVE, true);
-            channel.setOption(StandardSocketOptions.SO_RCVBUF, getInteger("so_rcvbuf", 1024 * 1024 * 2));
-            channel.setOption(StandardSocketOptions.SO_SNDBUF, getInteger("so_sndbuf", 1024 * 1024 * 2));
+            // channel.setOption(StandardSocketOptions.SO_RCVBUF, getInteger("so_rcvbuf", 1024 * 1024 * 2));
+            // channel.setOption(StandardSocketOptions.SO_SNDBUF, getInteger("so_sndbuf", 1024 * 1024 * 2));
             channel.connect(new InetSocketAddress(host, port)).get(getLong("connectTimeout", 3000L), TimeUnit.MILLISECONDS);
             log.info("New TCP(AIO) connection to '" + key + "'");
         } catch(Exception ex) {

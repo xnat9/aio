@@ -67,7 +67,7 @@ public class AioStream {
         if (delegate == null) throw new NullPointerException("Param exec required");
         this.channel = channel;
         this.delegate = delegate;
-        this.buf = ByteBuffer.allocate(delegate.getInteger("maxMsgSize", 1024 * 1024));
+        this.buf = ByteBuffer.allocate(delegate.getInteger("receiveMsgBufferSize", 1024 * 1024));
         this.delim = (byte[]) delegate.getAttr("delim");
     }
 

@@ -54,15 +54,14 @@ public class AioServer extends AioBase {
      * 创建 {@link AioServer}
      * @param attrs 属性集
      *              delimiter: 分隔符
-     *              maxMsgSize: socket 每次取数据的最大
      *              writeTimeout: 数据写入超时时间. 单位:毫秒
      *              backlog: 排队连接
      *              connection.maxIdle: 连接最大存活时间
-     * @param exec
+     * @param exec 线程池
      */
     public AioServer(Map<String, Object> attrs, ExecutorService exec) {
         super(attrs, exec);
-        hpCfg = getStr("hp", ":7001");
+        hpCfg = getStr("hp", ":7001").trim();
         try {
             String delimiter = getStr("delimiter", null);
             if (delimiter != null && !delimiter.isEmpty()) delim = delimiter.getBytes(getStr("charset", "utf-8"));
@@ -84,7 +83,7 @@ public class AioServer extends AioBase {
             AsynchronousChannelGroup cg = AsynchronousChannelGroup.withThreadPool(exec);
             ssc = AsynchronousServerSocketChannel.open(cg);
             ssc.setOption(StandardSocketOptions.SO_REUSEADDR, true);
-            ssc.setOption(StandardSocketOptions.SO_RCVBUF, getInteger("so_revbuf", 1024 * 1024 * 1));
+            // ssc.setOption(StandardSocketOptions.SO_RCVBUF, getInteger("so_revbuf", 1024 * 1024 * 1));
 
             String host = hpCfg.split(":")[0];
             InetSocketAddress addr = (host != null && !host.isEmpty()) ? new InetSocketAddress(host, port) : new InetSocketAddress(port);
@@ -177,10 +176,10 @@ public class AioServer extends AioBase {
             try {
                 // 初始化连接
                 channel.setOption(StandardSocketOptions.SO_REUSEADDR, true);
-                channel.setOption(StandardSocketOptions.SO_RCVBUF, getInteger("so_rcvbuf", 1024 * 1024 * 2));
-                channel.setOption(StandardSocketOptions.SO_SNDBUF, getInteger("so_sndbuf", 1024 * 1024 * 2));
                 channel.setOption(StandardSocketOptions.SO_KEEPALIVE, true);
                 channel.setOption(StandardSocketOptions.TCP_NODELAY, true);
+                // channel.setOption(StandardSocketOptions.SO_RCVBUF, getInteger("so_rcvbuf", 1024 * 1024 * 2));
+                // channel.setOption(StandardSocketOptions.SO_SNDBUF, getInteger("so_sndbuf", 1024 * 1024 * 2));
 
                 se = new AioStream(channel, this) { //创建AioStream
                     @Override
@@ -228,7 +227,7 @@ public class AioServer extends AioBase {
 
     /**
      * hp -> host:port
-     * @return
+     * @return hp
      */
     public String getHp() {
         String ip = hpCfg.split(":")[0];
@@ -239,7 +238,7 @@ public class AioServer extends AioBase {
 
     /**
      * 暴露的端口
-     * @return
+     * @return 端口
      */
     public Integer getPort() { return port; }
 

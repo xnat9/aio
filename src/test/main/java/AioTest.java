@@ -25,11 +25,11 @@ public class AioTest {
             @Override
             protected void receive(byte[] bs, AioStream stream) {
                 log.info("服务端 -> 接收数据: " + new String(bs) + ", length: " + bs.length);
-                try {
-                    Thread.sleep(1000 * 4);
-                } catch (InterruptedException e) {
-                    e.printStackTrace();
-                }
+//                try {
+//                    Thread.sleep(1000 * 4);
+//                } catch (InterruptedException e) {
+//                    e.printStackTrace();
+//                }
                 stream.reply(
                         ("服务端 回消息: " + new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date())).getBytes(),
                         (ex, me) -> { //失败回调函数
@@ -45,11 +45,11 @@ public class AioTest {
             @Override
             protected void receive(byte[] bs, AioStream stream) { //数据接收
                 log.info("客户端 -> 接收数据: " + new String(bs) + ", length: " + bs.length);
-                try {
-                    Thread.sleep(1000 * 2);
-                } catch (InterruptedException e) {
-                    e.printStackTrace();
-                }
+//                try {
+//                    Thread.sleep(1000 * 2);
+//                } catch (InterruptedException e) {
+//                    e.printStackTrace();
+//                }
                 stream.reply(
                         ("客户端 -> 回消息: " + new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date())).getBytes()
                 );
