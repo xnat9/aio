@@ -65,7 +65,7 @@ public class AioServer extends AioBase {
         hpCfg = getStr("hp", ":7001");
         try {
             String delimiter = getStr("delimiter", null);
-            if (delimiter != null && !delimiter.isEmpty()) delim = delimiter.getBytes("utf-8");
+            if (delimiter != null && !delimiter.isEmpty()) delim = delimiter.getBytes(getStr("charset", "utf-8"));
             else delim = null;
             attrs.put("delim", delim);
             port = Integer.valueOf(hpCfg.split(":")[1]);

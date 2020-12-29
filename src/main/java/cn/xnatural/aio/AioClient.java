@@ -10,13 +10,18 @@ import java.nio.ByteBuffer;
 import java.nio.channels.AsynchronousChannelGroup;
 import java.nio.channels.AsynchronousSocketChannel;
 import java.nio.channels.ClosedChannelException;
-import java.util.*;
+import java.util.Iterator;
+import java.util.LinkedList;
+import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
-import java.util.function.*;
+import java.util.function.BiConsumer;
+import java.util.function.Consumer;
+import java.util.function.Function;
+import java.util.function.Supplier;
 
 /**
  * Aio Client
@@ -27,6 +32,9 @@ public class AioClient extends AioBase {
      * host:port -> List<AioStream>
      */
     protected final        Map<String, SafeList<AioStream>> streamMap = new ConcurrentHashMap<>();
+    /**
+     * {@link AsynchronousChannelGroup}
+     */
     protected final        AsynchronousChannelGroup            group;
     /**
      * 数据分割符(半包和粘包)
@@ -47,7 +55,7 @@ public class AioClient extends AioBase {
         super(attrs, exec);
         try {
             String delimiter = getStr("delimiter", null);
-            if (delimiter != null && !delimiter.isEmpty()) delim = delimiter.getBytes(attrs.getOrDefault("charset", "utf-8").toString());
+            if (delimiter != null && !delimiter.isEmpty()) delim = toByte(delimiter, getStr("charset", "utf-8"));
             else delim = null;
             attrs.put("delim", delim);
             this.group = AsynchronousChannelGroup.withThreadPool(exec);
@@ -58,7 +66,7 @@ public class AioClient extends AioBase {
 
 
     /**
-     * 停止,清除连接
+     * 停止,清除并关闭连接
      */
     public void stop() {
         if (group.isShutdown()) return;
